@@ -17,6 +17,9 @@ type Executor struct {
 	executor backend.Executor
 	client   backend.TaskHubClient
 	worker   backend.TaskHubWorker
+
+	compactorEnabled   bool
+	compactionInterval time.Duration
 }
 
 func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
@@ -35,6 +38,12 @@ func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
 		client:   client,
 		worker:   worker,
 	}
+}
+
+func (e *Executor) EnableCompactor(interval time.Duration) error {
+	e.compactionInterval = interval
+	e.compactorEnabled = true
+	return registerCompaction(e)
 }
 
 type Task interface {
@@ -63,7 +72,14 @@ func (e *Executor) RegisterWorkflow(workflow Workflow) error {
 }
 
 func (e *Executor) Start(ctx context.Context) error {
-	return e.worker.Start(ctx)
+	if err := e.worker.Start(ctx); err != nil {
+		return err
+	}
+
+	if e.compactorEnabled {
+		return compactBackend(ctx, e)
+	}
+	return stopCompaction(ctx, e)
 }
 
 func (e *Executor) Shutdown(ctx context.Context) error {

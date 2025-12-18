@@ -63,6 +63,8 @@ func TestExecutor(t *testing.T) {
 	executor := NewExecutor(db)
 	executor.RegisterWorkflow(&TestWorkflow{})
 
+	require.NoError(t, executor.EnableCompactor(time.Second))
+
 	require.NoError(t, executor.Start(t.Context()))
 	defer func() {
 		require.NoError(t, executor.Shutdown(t.Context()))
@@ -82,7 +84,8 @@ func TestExecutor(t *testing.T) {
 	_, err = executor.WorkflowMetadata(t.Context(), id)
 	require.NoError(t, err)
 
-	require.NoError(t, executor.PurgeCompletedWorkflowsOlderThan(t.Context(), -1*time.Second))
+	// wait for two seconds and see if we've compacted stuff
+	time.Sleep(2 * time.Second)
 
 	_, err = executor.WorkflowMetadata(t.Context(), id)
 	require.Error(t, err)
