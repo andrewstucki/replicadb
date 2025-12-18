@@ -78,11 +78,11 @@ func TestExecutor(t *testing.T) {
 	require.True(t, output.CalledTask)
 	require.True(t, output.CalledWorkflow)
 
-	_, err = executor.backend.GetOrchestrationMetadata(t.Context(), id)
+	_, err = executor.WorkflowMetadata(t.Context(), id)
 	require.NoError(t, err)
 
-	require.NoError(t, executor.backend.PurgeCompletedOrchestrationState(t.Context()))
+	require.NoError(t, executor.PurgeCompletedWorkflows(t.Context()))
 
-	_, err = executor.backend.GetOrchestrationMetadata(t.Context(), id)
+	_, err = executor.WorkflowMetadata(t.Context(), id)
 	require.Error(t, err)
 }
