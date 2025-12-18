@@ -3,6 +3,7 @@ package durabletask
 import (
 	"context"
 
+	"github.com/andrewstucki/replicadb"
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
 	"github.com/microsoft/durabletask-go/task"
@@ -17,7 +18,8 @@ type Executor struct {
 	worker   backend.TaskHubWorker
 }
 
-func NewExecutor(replicadb *ReplicaDBBackend) *Executor {
+func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
+	replicadb := NewReplicaDBBackend(db, options...)
 	registry := task.NewTaskRegistry()
 	executor := task.NewTaskExecutor(registry)
 	orchestrationWorker := backend.NewOrchestrationWorker(replicadb, executor, replicadb.logger)

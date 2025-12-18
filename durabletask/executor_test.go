@@ -59,7 +59,7 @@ func TestExecutor(t *testing.T) {
 	db, err := replicadb.Memory()
 	require.NoError(t, err)
 
-	executor := NewExecutor(NewReplicaDBBackend(db))
+	executor := NewExecutor(db)
 	executor.RegisterWorkflow(&TestWorkflow{})
 
 	require.NoError(t, executor.Start(t.Context()))
