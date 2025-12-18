@@ -43,6 +43,8 @@ type ReplicaDBBackend struct {
 	logger                   backend.Logger
 }
 
+var _ backend.Backend = (*ReplicaDBBackend)(nil)
+
 // WithOrchestrationLockTimeout configures the orchestration lock timeout.
 func WithOrchestrationLockTimeout(timeout time.Duration) func(b *ReplicaDBBackend) {
 	return func(b *ReplicaDBBackend) {
@@ -80,7 +82,7 @@ func generateWorkerId() string {
 //
 // The returned value implements backend.Backend and is ready to be started
 // after applying any provided configuration options.
-func NewReplicaDBBackend(db *replicadb.DB, options ...Option) backend.Backend {
+func NewReplicaDBBackend(db *replicadb.DB, options ...Option) *ReplicaDBBackend {
 	workerId := generateWorkerId()
 
 	b := &ReplicaDBBackend{
