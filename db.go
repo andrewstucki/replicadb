@@ -163,6 +163,27 @@ func WithMaxConnections(conn int) Option {
 	}
 }
 
+// Memory opens a memory-based primary database.
+//
+// This is predominantly used for testing and does
+// no replication whatsoever. Note that it also
+// doesn't open up a connection to a real read-only
+// DB, as it shares the connection between read and write.
+func Memory() (*DB, error) {
+	db := newDB("")
+
+	memoryDB, err := driver.Open(":memory:")
+	if err != nil {
+		return nil, err
+	}
+	memoryDB.SetMaxOpenConns(1)
+
+	db.write = memoryDB
+	db.DB = memoryDB
+
+	return db, nil
+}
+
 // Open opens a primary database at the given path.
 //
 // It initializes Litestream replication if a replica client is configured,
@@ -216,7 +237,7 @@ func Open(path string, options ...Option) (*DB, error) {
 		if upstream != nil {
 			return nil, errors.Join(err, upstream.Close(context.Background()), writeDB.Close())
 		}
-		return nil, err
+		return nil, errors.Join(err, writeDB.Close())
 	}
 	readDB.SetMaxOpenConns(db.maxConn)
 

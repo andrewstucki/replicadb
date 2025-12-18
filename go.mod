@@ -4,11 +4,14 @@ go 1.25.5
 
 require (
 	github.com/benbjohnson/litestream v0.5.3
+	github.com/google/uuid v1.6.0
+	github.com/microsoft/durabletask-go v0.6.0
 	github.com/minio/minio-go/v7 v7.0.97
 	github.com/ncruces/go-sqlite3 v0.30.3
 	github.com/ncruces/go-sqlite3/litestream v0.30.2
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go/modules/minio v0.40.0
+	google.golang.org/protobuf v1.36.10
 )
 
 require (
@@ -67,7 +70,6 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3 // indirect
@@ -83,6 +85,7 @@ require (
 	github.com/magefile/mage v1.14.0 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/markusmobius/go-dateparser v1.2.4 // indirect
+	github.com/marusama/semaphore/v2 v2.5.0 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/minio/crc64nvme v1.1.0 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
@@ -144,7 +147,6 @@ require (
 	google.golang.org/genproto/googleapis/api v0.0.0-20250929231259-57b25ae835d4 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250929231259-57b25ae835d4 // indirect
 	google.golang.org/grpc v1.75.1 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.66.10 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
