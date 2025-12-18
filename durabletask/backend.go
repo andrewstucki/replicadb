@@ -90,7 +90,7 @@ func NewReplicaDBBackend(db *replicadb.DB, options ...Option) *ReplicaDBBackend 
 		workerName:               workerId,
 		orchestrationLockTimeout: time.Duration(2 * time.Minute),
 		activityLockTimeout:      time.Duration(2 * time.Minute),
-		logger:                   backend.DefaultLogger(),
+		logger:                   NoopLogger(),
 	}
 
 	for _, opt := range options {
@@ -651,69 +651,12 @@ func (b *ReplicaDBBackend) AddNewOrchestrationEvent(ctx context.Context, iid api
 // GetOrchestrationMetadata retrieves metadata for a specific orchestration
 // instance, including runtime status, timestamps, input/output, and failure details.
 func (b *ReplicaDBBackend) GetOrchestrationMetadata(ctx context.Context, iid api.InstanceID) (*api.OrchestrationMetadata, error) {
-	row := b.db.QueryRowContext(
+	return deserializeMetadataRecord(b.db.QueryRowContext(
 		ctx,
 		`SELECT [InstanceID], [Name], [RuntimeStatus], [CreatedTime], [LastUpdatedTime], [Input], [Output], [CustomStatus], [FailureDetails]
 		FROM Instances WHERE [InstanceID] = ?`,
 		string(iid),
-	)
-
-	err := row.Err()
-	if err == sql.ErrNoRows {
-		return nil, api.ErrInstanceNotFound
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to query the Instances table: %w", row.Err())
-	}
-
-	var instanceID *string
-	var name *string
-	var runtimeStatus *string
-	var createdAt *time.Time
-	var lastUpdatedAt *time.Time
-	var input *string
-	var output *string
-	var customStatus *string
-	var failureDetails *backend.TaskFailureDetails
-
-	var failureDetailsPayload []byte
-	err = row.Scan(&instanceID, &name, &runtimeStatus, &createdAt, &lastUpdatedAt, &input, &output, &customStatus, &failureDetailsPayload)
-	if err == sql.ErrNoRows {
-		return nil, api.ErrInstanceNotFound
-	} else if err != nil {
-		return nil, fmt.Errorf("failed to scan the Instances table result: %w", err)
-	}
-
-	if input == nil {
-		input = &emptyString
-	}
-
-	if output == nil {
-		output = &emptyString
-	}
-
-	if customStatus == nil {
-		customStatus = &emptyString
-	}
-
-	if len(failureDetailsPayload) > 0 {
-		failureDetails = new(backend.TaskFailureDetails)
-		if err := proto.Unmarshal(failureDetailsPayload, failureDetails); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal failure details: %w", err)
-		}
-	}
-
-	metadata := api.NewOrchestrationMetadata(
-		iid,
-		*name,
-		fromRuntimeStatusString(*runtimeStatus),
-		*createdAt,
-		*lastUpdatedAt,
-		*input,
-		*output,
-		*customStatus,
-		failureDetails,
-	)
-	return metadata, nil
+	))
 }
 
 // GetOrchestrationRuntimeState loads the full orchestration runtime state,
@@ -977,6 +920,161 @@ func (b *ReplicaDBBackend) AbandonActivityWorkItem(ctx context.Context, wi *back
 		return backend.ErrWorkItemLockLost
 	}
 
+	return nil
+}
+
+// GetOrchestrationsWithStatus returns orchestration metadata of orchestrations with the given status.
+func (b *ReplicaDBBackend) GetOrchestrationsWithStatus(ctx context.Context, status api.OrchestrationStatus) ([]*api.OrchestrationMetadata, error) {
+	rows, err := b.db.QueryContext(
+		ctx,
+		`SELECT [InstanceID], [Name], [RuntimeStatus], [CreatedTime], [LastUpdatedTime], [Input], [Output], [CustomStatus], [FailureDetails]
+		FROM Instances WHERE [RuntimeStatus] = ?`,
+		toRuntimeStatusString(status),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	metadata := []*api.OrchestrationMetadata{}
+
+	for rows.Next() {
+		meta, err := deserializeMetadataRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		metadata = append(metadata, meta)
+	}
+
+	return metadata, nil
+}
+
+// GetOrchestrationsWithName returns orchestration metadata of orchestrations with the given status.
+func (b *ReplicaDBBackend) GetOrchestrationsWithName(ctx context.Context, name string) ([]*api.OrchestrationMetadata, error) {
+	rows, err := b.db.QueryContext(
+		ctx,
+		`SELECT [InstanceID], [Name], [RuntimeStatus], [CreatedTime], [LastUpdatedTime], [Input], [Output], [CustomStatus], [FailureDetails]
+		FROM Instances WHERE [Name] = ?`,
+		name,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	metadata := []*api.OrchestrationMetadata{}
+
+	for rows.Next() {
+		meta, err := deserializeMetadataRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		metadata = append(metadata, meta)
+	}
+
+	return metadata, nil
+}
+
+type rowScanner interface {
+	Err() error
+	Scan(dest ...any) error
+}
+
+func deserializeMetadataRecord(row rowScanner) (*api.OrchestrationMetadata, error) {
+	err := row.Err()
+	if err == sql.ErrNoRows {
+		return nil, api.ErrInstanceNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to query the Instances table: %w", row.Err())
+	}
+
+	var instanceID *string
+	var name *string
+	var runtimeStatus *string
+	var createdAt *time.Time
+	var lastUpdatedAt *time.Time
+	var input *string
+	var output *string
+	var customStatus *string
+	var failureDetails *backend.TaskFailureDetails
+
+	var failureDetailsPayload []byte
+	err = row.Scan(&instanceID, &name, &runtimeStatus, &createdAt, &lastUpdatedAt, &input, &output, &customStatus, &failureDetailsPayload)
+	if err == sql.ErrNoRows {
+		return nil, api.ErrInstanceNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("failed to scan the Instances table result: %w", err)
+	}
+
+	if input == nil {
+		input = &emptyString
+	}
+
+	if output == nil {
+		output = &emptyString
+	}
+
+	if customStatus == nil {
+		customStatus = &emptyString
+	}
+
+	if len(failureDetailsPayload) > 0 {
+		failureDetails = new(backend.TaskFailureDetails)
+		if err := proto.Unmarshal(failureDetailsPayload, failureDetails); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal failure details: %w", err)
+		}
+	}
+
+	metadata := api.NewOrchestrationMetadata(
+		api.InstanceID(*instanceID),
+		*name,
+		fromRuntimeStatusString(*runtimeStatus),
+		*createdAt,
+		*lastUpdatedAt,
+		*input,
+		*output,
+		*customStatus,
+		failureDetails,
+	)
+	return metadata, nil
+}
+
+// PurgeCompletedOrchestrationState permanently deletes all persisted state for all
+// orchestration instances, provided they have completed.
+func (b *ReplicaDBBackend) PurgeCompletedOrchestrationState(ctx context.Context, opts ...api.PurgeOptions) error {
+	db, err := b.db.Write()
+	if err != nil {
+		return err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, "SELECT [InstanceID] FROM Instances WHERE [RuntimeStatus] IN ('COMPLETED', 'FAILED', 'TERMINATED')")
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		if err := b.cleanupOrchestrationStateInternal(ctx, tx, api.InstanceID(id), true); err != nil {
+			return err
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
 	return nil
 }
 
