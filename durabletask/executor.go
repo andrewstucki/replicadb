@@ -2,6 +2,7 @@ package durabletask
 
 import (
 	"context"
+	"time"
 
 	"github.com/andrewstucki/replicadb"
 	"github.com/microsoft/durabletask-go/api"
@@ -109,6 +110,6 @@ func (e *Executor) PurgeWorkflow(ctx context.Context, id api.InstanceID, opts ..
 	return e.client.PurgeOrchestrationState(ctx, id, opts...)
 }
 
-func (e *Executor) PurgeCompletedWorkflows(ctx context.Context, opts ...api.PurgeOptions) error {
-	return e.backend.PurgeCompletedOrchestrationState(ctx, opts...)
+func (e *Executor) PurgeCompletedWorkflowsOlderThan(ctx context.Context, timeframe time.Duration, opts ...api.PurgeOptions) error {
+	return e.backend.PurgeCompletedOrchestrationStateBefore(ctx, time.Now().Add(-timeframe), opts...)
 }

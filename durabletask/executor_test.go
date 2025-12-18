@@ -3,6 +3,7 @@ package durabletask
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/andrewstucki/replicadb"
 	"github.com/microsoft/durabletask-go/task"
@@ -81,7 +82,7 @@ func TestExecutor(t *testing.T) {
 	_, err = executor.WorkflowMetadata(t.Context(), id)
 	require.NoError(t, err)
 
-	require.NoError(t, executor.PurgeCompletedWorkflows(t.Context()))
+	require.NoError(t, executor.PurgeCompletedWorkflowsOlderThan(t.Context(), -1*time.Second))
 
 	_, err = executor.WorkflowMetadata(t.Context(), id)
 	require.Error(t, err)

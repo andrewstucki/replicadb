@@ -223,6 +223,7 @@ func (b *ReplicaDBBackend) CompleteOrchestrationWorkItem(ctx context.Context, wi
 	sqlUpdateArgs := make([]any, 0, 10)
 	isCreated := false
 	isCompleted := false
+	isTerminated := false
 
 	for _, e := range wi.State.NewEvents() {
 		if es := e.GetExecutionStarted(); es != nil {
@@ -252,6 +253,14 @@ func (b *ReplicaDBBackend) CompleteOrchestrationWorkItem(ctx context.Context, wi
 			} else {
 				sqlUpdateArgs = append(sqlUpdateArgs, nil)
 			}
+		} else if et := e.GetExecutionTerminated(); et != nil {
+			if isTerminated {
+				// TODO: Log warning about duplicate termination event
+				continue
+			}
+			isTerminated = true
+			sqlSB.WriteString("[CompletedTime] = ?, ")
+			sqlUpdateArgs = append(sqlUpdateArgs, now)
 		}
 		// TODO: Execution suspended & resumed
 	}
@@ -1039,9 +1048,9 @@ func deserializeMetadataRecord(row rowScanner) (*api.OrchestrationMetadata, erro
 	return metadata, nil
 }
 
-// PurgeCompletedOrchestrationState permanently deletes all persisted state for all
-// orchestration instances, provided they have completed.
-func (b *ReplicaDBBackend) PurgeCompletedOrchestrationState(ctx context.Context, opts ...api.PurgeOptions) error {
+// PurgeCompletedOrchestrationStateBefore permanently deletes all persisted state for all
+// orchestration instances, provided they have completed prior to the given time.
+func (b *ReplicaDBBackend) PurgeCompletedOrchestrationStateBefore(ctx context.Context, before time.Time, opts ...api.PurgeOptions) error {
 	db, err := b.db.Write()
 	if err != nil {
 		return err
@@ -1053,7 +1062,7 @@ func (b *ReplicaDBBackend) PurgeCompletedOrchestrationState(ctx context.Context,
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, "SELECT [InstanceID] FROM Instances WHERE [RuntimeStatus] IN ('COMPLETED', 'FAILED', 'TERMINATED')")
+	rows, err := tx.QueryContext(ctx, "SELECT [InstanceID] FROM Instances WHERE [RuntimeStatus] IN ('COMPLETED', 'FAILED', 'TERMINATED') AND [CompletedTime] < ?", before.UTC())
 	if err == sql.ErrNoRows {
 		return nil
 	}
