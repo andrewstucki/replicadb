@@ -40,10 +40,10 @@ func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
 	}
 }
 
-func (e *Executor) EnableCompactor(interval time.Duration) error {
+func (e *Executor) EnableCompactor(interval time.Duration) *Executor {
 	e.compactionInterval = interval
 	e.compactorEnabled = true
-	return registerCompaction(e)
+	return e
 }
 
 func (e *Executor) RegisterActivity(name string, activity task.Activity) error {
@@ -55,6 +55,10 @@ func (e *Executor) RegisterOrchestration(name string, orchestrator task.Orchestr
 }
 
 func (e *Executor) Start(ctx context.Context) error {
+	if err := registerCompaction(e); err != nil {
+		return err
+	}
+
 	if err := e.worker.Start(ctx); err != nil {
 		return err
 	}

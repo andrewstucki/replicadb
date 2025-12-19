@@ -43,11 +43,9 @@ func TestExecutor(t *testing.T) {
 	db, err := replicadb.Memory()
 	require.NoError(t, err)
 
-	executor := NewExecutor(db)
+	executor := NewExecutor(db).EnableCompactor(time.Second)
 	require.NoError(t, executor.RegisterOrchestration(TestOrchestrationName, TestingOrchestration))
 	require.NoError(t, executor.RegisterActivity(TestActivityName, TestingActivity))
-
-	require.NoError(t, executor.EnableCompactor(time.Second))
 
 	require.NoError(t, executor.Start(t.Context()))
 	defer func() {
