@@ -1,6 +1,8 @@
 package durabletask
 
 import (
+	"context"
+
 	"github.com/microsoft/durabletask-go/api"
 	"github.com/microsoft/durabletask-go/backend"
 )
@@ -33,6 +35,31 @@ func toExecutionStartedEvent(historyEvent *backend.HistoryEvent) *executionStart
 		executionId: startEvent.OrchestrationInstance.ExecutionId.GetValue(),
 		input:       startEvent.Input.GetValue(),
 	}
+}
+
+func isTerminal(status api.OrchestrationStatus) bool {
+	switch status {
+	case api.RUNTIME_STATUS_COMPLETED,
+		api.RUNTIME_STATUS_FAILED,
+		api.RUNTIME_STATUS_TERMINATED,
+		api.RUNTIME_STATUS_CANCELED:
+		return true
+	default:
+		return false
+	}
+}
+
+func isRunning(ctx context.Context, backend *ReplicaDBBackend, id api.InstanceID) (bool, error) {
+	metadata, err := backend.GetOrchestrationMetadata(ctx, id)
+	if (err != nil && err == api.ErrInstanceNotFound) || (metadata != nil && isTerminal(metadata.RuntimeStatus)) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 type executionStartedEvent struct {
