@@ -1050,7 +1050,9 @@ func deserializeMetadataRecord(row rowScanner) (*api.OrchestrationMetadata, erro
 
 // PurgeCompletedOrchestrationStateBefore permanently deletes all persisted state for all
 // orchestration instances, provided they have completed prior to the given time.
-func (b *ReplicaDBBackend) PurgeCompletedOrchestrationStateBefore(ctx context.Context, before time.Time, opts ...api.PurgeOptions) error {
+func (b *ReplicaDBBackend) PurgeCompletedOrchestrationStateOlderThan(ctx context.Context, timeframe time.Duration, opts ...api.PurgeOptions) error {
+	before := time.Now().Add(-timeframe).UTC()
+
 	db, err := b.db.Write()
 	if err != nil {
 		return err
@@ -1062,7 +1064,7 @@ func (b *ReplicaDBBackend) PurgeCompletedOrchestrationStateBefore(ctx context.Co
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, "SELECT [InstanceID] FROM Instances WHERE [RuntimeStatus] IN ('COMPLETED', 'FAILED', 'TERMINATED') AND [CompletedTime] < ?", before.UTC())
+	rows, err := tx.QueryContext(ctx, "SELECT [InstanceID] FROM Instances WHERE [RuntimeStatus] IN ('COMPLETED', 'FAILED', 'TERMINATED') AND [CompletedTime] < ?", before)
 	if err == sql.ErrNoRows {
 		return nil
 	}

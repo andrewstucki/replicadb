@@ -46,29 +46,12 @@ func (e *Executor) EnableCompactor(interval time.Duration) error {
 	return registerCompaction(e)
 }
 
-type Task interface {
-	Name() string
-	Execute(ctx task.ActivityContext) (any, error)
+func (e *Executor) RegisterActivity(name string, activity task.Activity) error {
+	return e.registry.AddActivityN(name, activity)
 }
 
-type Workflow interface {
-	Name() string
-	Execute(ctx *task.OrchestrationContext) (any, error)
-	Tasks() []Task
-}
-
-func (e *Executor) RegisterWorkflow(workflow Workflow) error {
-	if err := e.registry.AddOrchestratorN(workflow.Name(), workflow.Execute); err != nil {
-		return err
-	}
-
-	for _, task := range workflow.Tasks() {
-		if err := e.registry.AddActivityN(task.Name(), task.Execute); err != nil {
-			return err
-		}
-	}
-
-	return nil
+func (e *Executor) RegisterOrchestration(name string, orchestrator task.Orchestrator) error {
+	return e.registry.AddOrchestratorN(name, orchestrator)
 }
 
 func (e *Executor) Start(ctx context.Context) error {
@@ -86,23 +69,23 @@ func (e *Executor) Shutdown(ctx context.Context) error {
 	return e.worker.Shutdown(ctx)
 }
 
-func (e *Executor) ScheduleWorkflow(ctx context.Context, orchestrator string, opts ...api.NewOrchestrationOptions) (api.InstanceID, error) {
-	return e.client.ScheduleNewOrchestration(ctx, orchestrator, opts...)
+func (e *Executor) ScheduleOrchestration(ctx context.Context, name string, opts ...api.NewOrchestrationOptions) (api.InstanceID, error) {
+	return e.client.ScheduleNewOrchestration(ctx, name, opts...)
 }
 
-func (e *Executor) WorkflowMetadata(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
+func (e *Executor) OrchestrationMetadata(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
 	return e.client.FetchOrchestrationMetadata(ctx, id)
 }
 
-func (e *Executor) WaitForWorkflowStart(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
+func (e *Executor) WaitForOrchestrationStart(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
 	return e.client.WaitForOrchestrationStart(ctx, id)
 }
 
-func (e *Executor) WaitForWorkflowCompletion(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
+func (e *Executor) WaitForOrchestrationCompletion(ctx context.Context, id api.InstanceID) (*api.OrchestrationMetadata, error) {
 	return e.client.WaitForOrchestrationCompletion(ctx, id)
 }
 
-func (e *Executor) TerminateWorkflow(ctx context.Context, id api.InstanceID, opts ...api.TerminateOptions) error {
+func (e *Executor) TerminateOrchestration(ctx context.Context, id api.InstanceID, opts ...api.TerminateOptions) error {
 	return e.client.TerminateOrchestration(ctx, id, opts...)
 }
 
@@ -110,22 +93,22 @@ func (e *Executor) ExternalEvent(ctx context.Context, id api.InstanceID, eventNa
 	return e.client.RaiseEvent(ctx, id, eventName, opts...)
 }
 
-func (e *Executor) SuspendWorkflow(ctx context.Context, id api.InstanceID, reason string) error {
+func (e *Executor) SuspendOrchestration(ctx context.Context, id api.InstanceID, reason string) error {
 	return e.client.SuspendOrchestration(ctx, id, reason)
 }
 
-func (e *Executor) ResumeWorkflow(ctx context.Context, id api.InstanceID, reason string) error {
+func (e *Executor) ResumeOrchestration(ctx context.Context, id api.InstanceID, reason string) error {
 	return e.client.ResumeOrchestration(ctx, id, reason)
 }
 
-func (e *Executor) WorkflowsWithName(ctx context.Context, name string) ([]*api.OrchestrationMetadata, error) {
+func (e *Executor) OrchestrationsWithName(ctx context.Context, name string) ([]*api.OrchestrationMetadata, error) {
 	return e.backend.GetOrchestrationsWithName(ctx, name)
 }
 
-func (e *Executor) PurgeWorkflow(ctx context.Context, id api.InstanceID, opts ...api.PurgeOptions) error {
+func (e *Executor) PurgeOrchestration(ctx context.Context, id api.InstanceID, opts ...api.PurgeOptions) error {
 	return e.client.PurgeOrchestrationState(ctx, id, opts...)
 }
 
-func (e *Executor) PurgeCompletedWorkflowsOlderThan(ctx context.Context, timeframe time.Duration, opts ...api.PurgeOptions) error {
-	return e.backend.PurgeCompletedOrchestrationStateBefore(ctx, time.Now().Add(-timeframe), opts...)
+func (e *Executor) PurgeCompletedOrchestrationsOlderThan(ctx context.Context, timeframe time.Duration, opts ...api.PurgeOptions) error {
+	return e.backend.PurgeCompletedOrchestrationStateOlderThan(ctx, timeframe, opts...)
 }

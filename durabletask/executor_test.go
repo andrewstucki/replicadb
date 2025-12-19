@@ -11,49 +11,32 @@ import (
 )
 
 const (
-	TestTaskName     = "TestTask"
-	TestWorkflowName = "TestWorkflow"
+	TestActivityName      = "TestActivity"
+	TestOrchestrationName = "TestOrchestration"
 )
 
 type tracker struct {
-	CalledTask     bool
-	CalledWorkflow bool
+	CalledActivity      bool
+	CalledOrchestration bool
 }
 
-type TestTask struct{}
-
-func (t *TestTask) Name() string {
-	return TestTaskName
-}
-func (t *TestTask) Execute(ctx task.ActivityContext) (any, error) {
+func TestingActivity(ctx task.ActivityContext) (any, error) {
 	var input tracker
 	if err := ctx.GetInput(&input); err != nil {
 		return nil, err
 	}
-	input.CalledTask = true
+	input.CalledActivity = true
 	return input, nil
 }
 
-type TestWorkflow struct{}
-
-func (t *TestWorkflow) Name() string {
-	return TestWorkflowName
-}
-
-func (t *TestWorkflow) Execute(ctx *task.OrchestrationContext) (any, error) {
+func TestingOrchestration(ctx *task.OrchestrationContext) (any, error) {
 	var output tracker
-	if err := ctx.CallActivity(TestTaskName, task.WithActivityInput(tracker{
-		CalledWorkflow: true,
+	if err := ctx.CallActivity(TestActivityName, task.WithActivityInput(tracker{
+		CalledOrchestration: true,
 	})).Await(&output); err != nil {
 		return nil, err
 	}
 	return output, nil
-}
-
-func (t *TestWorkflow) Tasks() []Task {
-	return []Task{
-		&TestTask{},
-	}
 }
 
 func TestExecutor(t *testing.T) {
@@ -61,7 +44,8 @@ func TestExecutor(t *testing.T) {
 	require.NoError(t, err)
 
 	executor := NewExecutor(db)
-	executor.RegisterWorkflow(&TestWorkflow{})
+	require.NoError(t, executor.RegisterOrchestration(TestOrchestrationName, TestingOrchestration))
+	require.NoError(t, executor.RegisterActivity(TestActivityName, TestingActivity))
 
 	require.NoError(t, executor.EnableCompactor(time.Second))
 
@@ -70,23 +54,23 @@ func TestExecutor(t *testing.T) {
 		require.NoError(t, executor.Shutdown(t.Context()))
 	}()
 
-	id, err := executor.ScheduleWorkflow(t.Context(), TestWorkflowName)
+	id, err := executor.ScheduleOrchestration(t.Context(), TestOrchestrationName)
 	require.NoError(t, err)
 
-	metadata, err := executor.WaitForWorkflowCompletion(t.Context(), id)
+	metadata, err := executor.WaitForOrchestrationCompletion(t.Context(), id)
 	require.NoError(t, err)
 
 	var output tracker
 	require.NoError(t, json.Unmarshal([]byte(metadata.SerializedOutput), &output))
-	require.True(t, output.CalledTask)
-	require.True(t, output.CalledWorkflow)
+	require.True(t, output.CalledActivity)
+	require.True(t, output.CalledOrchestration)
 
-	_, err = executor.WorkflowMetadata(t.Context(), id)
+	_, err = executor.OrchestrationMetadata(t.Context(), id)
 	require.NoError(t, err)
 
 	// wait for two seconds and see if we've compacted stuff
 	time.Sleep(2 * time.Second)
 
-	_, err = executor.WorkflowMetadata(t.Context(), id)
+	_, err = executor.OrchestrationMetadata(t.Context(), id)
 	require.Error(t, err)
 }

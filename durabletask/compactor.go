@@ -10,9 +10,9 @@ import (
 )
 
 const (
-	compactionTaskName     = "__compaction_task"
-	compactionWorkflowName = "__compaction"
-	compactionID           = api.InstanceID("__compaction")
+	compactionActivityName      = "__compaction_activity"
+	compactionOrchestrationName = "__compaction"
+	compactionID                = api.InstanceID("__compaction")
 )
 
 type backendRegistry struct {
@@ -43,7 +43,10 @@ func init() {
 }
 
 func registerCompaction(e *Executor) error {
-	return e.RegisterWorkflow(&compactor{})
+	if err := e.RegisterOrchestration(compactionOrchestrationName, compactOrchestration); err != nil {
+		return err
+	}
+	return e.RegisterActivity(compactionActivityName, compactionActivity)
 }
 
 type compactionInput struct {
@@ -71,7 +74,7 @@ func compactBackend(ctx context.Context, e *Executor) error {
 		return err
 	}
 
-	_, err := e.ScheduleWorkflow(ctx, compactionWorkflowName, api.WithInstanceID(compactionID), api.WithInput(compactionInput{
+	_, err := e.ScheduleOrchestration(ctx, compactionOrchestrationName, api.WithInstanceID(compactionID), api.WithInput(compactionInput{
 		WorkerName: e.backend.workerName,
 		Interval:   e.compactionInterval,
 	}))
@@ -90,16 +93,10 @@ func stopCompaction(ctx context.Context, e *Executor) error {
 	}
 
 	// terminate
-	return e.TerminateWorkflow(ctx, compactionID)
+	return e.TerminateOrchestration(ctx, compactionID)
 }
 
-type compactionTask struct{}
-
-func (t *compactionTask) Name() string {
-	return compactionTaskName
-}
-
-func (t *compactionTask) Execute(ctx task.ActivityContext) (any, error) {
+func compactionActivity(ctx task.ActivityContext) (any, error) {
 	var input compactionInput
 
 	if err := ctx.GetInput(&input); err != nil {
@@ -111,23 +108,17 @@ func (t *compactionTask) Execute(ctx task.ActivityContext) (any, error) {
 		return nil, nil
 	}
 
-	return nil, db.PurgeCompletedOrchestrationStateBefore(ctx.Context(), time.Now().Add(-input.Interval))
+	return nil, db.PurgeCompletedOrchestrationStateOlderThan(ctx.Context(), input.Interval)
 }
 
-type compactor struct{}
-
-func (t *compactor) Name() string {
-	return compactionWorkflowName
-}
-
-func (c *compactor) Execute(ctx *task.OrchestrationContext) (any, error) {
+func compactOrchestration(ctx *task.OrchestrationContext) (any, error) {
 	var input compactionInput
 
 	if err := ctx.GetInput(&input); err != nil {
 		return nil, err
 	}
 
-	if err := ctx.CallActivity(compactionTaskName, task.WithActivityInput(input)).Await(nil); err != nil {
+	if err := ctx.CallActivity(compactionActivityName, task.WithActivityInput(input)).Await(nil); err != nil {
 		return nil, err
 	}
 
@@ -138,10 +129,4 @@ func (c *compactor) Execute(ctx *task.OrchestrationContext) (any, error) {
 	ctx.ContinueAsNew(input)
 
 	return nil, nil
-}
-
-func (c *compactor) Tasks() []Task {
-	return []Task{
-		&compactionTask{},
-	}
 }
