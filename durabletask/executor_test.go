@@ -147,3 +147,45 @@ func TestExecutorsShareACompactor(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, running, "the first executor's compactor still runs")
 }
+
+func TestActivityLocksAreRenewed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hub.db")
+	var (
+		mu   sync.Mutex
+		runs int
+	)
+	var executors []*Executor
+	for range 2 {
+		db, err := replicadb.Open(path)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+		executor := NewExecutor(db, WithActivityLockTimeout(300*time.Millisecond))
+		require.NoError(t, executor.RegisterOrchestration(TestOrchestrationName, func(ctx *task.OrchestrationContext) (any, error) {
+			return nil, ctx.CallActivity(TestActivityName).Await(nil)
+		}))
+		require.NoError(t, executor.RegisterActivity(TestActivityName, func(ctx task.ActivityContext) (any, error) {
+			mu.Lock()
+			runs++
+			mu.Unlock()
+			// Five lock timeouts long: without renewal, the other executor claims it.
+			time.Sleep(1500 * time.Millisecond)
+			return nil, nil
+		}))
+		require.NoError(t, executor.Start(t.Context()))
+		t.Cleanup(func() { require.NoError(t, executor.Shutdown(context.Background())) })
+		executors = append(executors, executor)
+	}
+
+	id, err := executors[0].ScheduleOrchestration(t.Context(), TestOrchestrationName)
+	require.NoError(t, err)
+	// NB: bounded, since without renewal the executors take the activity from each other
+	// forever and the orchestration never completes.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	md, err := executors[1].WaitForOrchestrationCompletion(ctx, id)
+	require.NoError(t, err)
+	require.Nil(t, md.FailureDetails)
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, 1, runs, "the activity outlived its lock timeout and ran once")
+}

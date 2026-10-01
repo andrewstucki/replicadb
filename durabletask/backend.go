@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andrewstucki/replicadb"
@@ -42,6 +43,11 @@ type ReplicaDBBackend struct {
 	workerName               string
 	logger                   backend.Logger
 	maxParallelism           int32
+
+	// renewals stops renewing the lock of each activity work item this worker holds,
+	// by its sequence number.
+	renewalsMu sync.Mutex
+	renewals   map[int64]context.CancelFunc
 }
 
 var _ backend.Backend = (*ReplicaDBBackend)(nil)
@@ -53,7 +59,10 @@ func WithOrchestrationLockTimeout(timeout time.Duration) func(b *ReplicaDBBacken
 	}
 }
 
-// WithActivityLockTimeout configures the activity lock timeout.
+// WithActivityLockTimeout configures the activity lock timeout. A worker renews the
+// lock of each activity it runs every third of the timeout, so an activity may run for
+// as long as it needs; the timeout is how soon a crashed worker's activities pass to
+// another worker.
 func WithActivityLockTimeout(timeout time.Duration) func(b *ReplicaDBBackend) {
 	return func(b *ReplicaDBBackend) {
 		b.activityLockTimeout = timeout
@@ -101,6 +110,7 @@ func NewReplicaDBBackend(db *replicadb.DB, options ...Option) *ReplicaDBBackend 
 		activityLockTimeout:      time.Duration(2 * time.Minute),
 		logger:                   NoopLogger(),
 		maxParallelism:           1,
+		renewals:                 map[int64]context.CancelFunc{},
 	}
 
 	for _, opt := range options {
@@ -824,7 +834,7 @@ func (b *ReplicaDBBackend) GetActivityWorkItem(ctx context.Context) (*backend.Ac
 	}
 
 	now := time.Now().UTC()
-	newLockExpiration := now.Add(b.orchestrationLockTimeout)
+	newLockExpiration := now.Add(b.activityLockTimeout)
 
 	row := db.QueryRowContext(
 		ctx,
@@ -867,13 +877,71 @@ func (b *ReplicaDBBackend) GetActivityWorkItem(ctx context.Context) (*backend.Ac
 		NewEvent:       e,
 		LockedBy:       b.workerName,
 	}
+	b.renew(sequenceNumber)
 	return wi, nil
+}
+
+// renew extends the lock on the activity work item with sequenceNumber every third of
+// the activity lock timeout, until the item is completed or abandoned, the lock is lost,
+// or the backend stops.
+func (b *ReplicaDBBackend) renew(sequenceNumber int64) {
+	ctx, cancel := context.WithCancel(context.Background())
+	b.renewalsMu.Lock()
+	b.renewals[sequenceNumber] = cancel
+	b.renewalsMu.Unlock()
+	go func() {
+		defer b.stopRenewing(sequenceNumber)
+		ticker := time.NewTicker(b.activityLockTimeout / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if !b.extend(ctx, sequenceNumber) {
+				return
+			}
+		}
+	}()
+}
+
+// extend moves the lock on an activity work item this worker holds a lock timeout
+// on from now, and reports whether it still holds it.
+func (b *ReplicaDBBackend) extend(ctx context.Context, sequenceNumber int64) bool {
+	db, err := b.db.Write()
+	if err != nil {
+		b.logger.Warnf("renewing the lock on activity %d: %v", sequenceNumber, err)
+		return false
+	}
+	res, err := db.ExecContext(ctx,
+		"UPDATE NewTasks SET [LockExpiration] = ? WHERE [SequenceNumber] = ? AND [LockedBy] = ?",
+		time.Now().UTC().Add(b.activityLockTimeout), sequenceNumber, b.workerName)
+	if err != nil {
+		if ctx.Err() == nil {
+			b.logger.Warnf("renewing the lock on activity %d: %v", sequenceNumber, err)
+		}
+		return false
+	}
+	n, err := res.RowsAffected()
+	return err == nil && n > 0
+}
+
+// stopRenewing stops renewing the lock on an activity work item.
+func (b *ReplicaDBBackend) stopRenewing(sequenceNumber int64) {
+	b.renewalsMu.Lock()
+	defer b.renewalsMu.Unlock()
+	if cancel, ok := b.renewals[sequenceNumber]; ok {
+		cancel()
+		delete(b.renewals, sequenceNumber)
+	}
 }
 
 // CompleteActivityWorkItem completes an activity task by:
 //   - Enqueuing its result as a new orchestration event
 //   - Deleting the activity task if the lock is still valid
 func (b *ReplicaDBBackend) CompleteActivityWorkItem(ctx context.Context, wi *backend.ActivityWorkItem) error {
+	b.stopRenewing(wi.SequenceNumber)
 	db, err := b.db.Write()
 	if err != nil {
 		return err
@@ -917,6 +985,7 @@ func (b *ReplicaDBBackend) CompleteActivityWorkItem(ctx context.Context, wi *bac
 // AbandonActivityWorkItem releases the lock on an activity task, making it
 // available for retry by another worker.
 func (b *ReplicaDBBackend) AbandonActivityWorkItem(ctx context.Context, wi *backend.ActivityWorkItem) error {
+	b.stopRenewing(wi.SequenceNumber)
 	db, err := b.db.Write()
 	if err != nil {
 		return err
@@ -1130,9 +1199,13 @@ func (*ReplicaDBBackend) Start(context.Context) error {
 	return nil
 }
 
-// Stop shuts down the backend.
-//
-// ReplicaDBBackend does not require explicit shutdown logic.
-func (*ReplicaDBBackend) Stop(context.Context) error {
+// Stop shuts down the backend, and stops renewing the locks it holds.
+func (b *ReplicaDBBackend) Stop(context.Context) error {
+	b.renewalsMu.Lock()
+	defer b.renewalsMu.Unlock()
+	for sequenceNumber, cancel := range b.renewals {
+		cancel()
+		delete(b.renewals, sequenceNumber)
+	}
 	return nil
 }
