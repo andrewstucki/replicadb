@@ -26,8 +26,9 @@ func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
 	replicadb := NewReplicaDBBackend(db, options...)
 	registry := task.NewTaskRegistry()
 	executor := task.NewTaskExecutor(registry)
-	orchestrationWorker := backend.NewOrchestrationWorker(replicadb, executor, replicadb.logger)
-	activityWorker := backend.NewActivityTaskWorker(replicadb, executor, replicadb.logger)
+	parallelism := backend.WithMaxParallelism(replicadb.maxParallelism)
+	orchestrationWorker := backend.NewOrchestrationWorker(replicadb, executor, replicadb.logger, parallelism)
+	activityWorker := backend.NewActivityTaskWorker(replicadb, executor, replicadb.logger, parallelism)
 	worker := backend.NewTaskHubWorker(replicadb, orchestrationWorker, activityWorker, replicadb.logger)
 	client := backend.NewTaskHubClient(replicadb)
 

@@ -2,6 +2,7 @@ package durabletask
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -71,4 +72,51 @@ func TestExecutor(t *testing.T) {
 
 	_, err = executor.OrchestrationMetadata(t.Context(), id)
 	require.Error(t, err)
+}
+
+func TestExecutorParallelism(t *testing.T) {
+	db, err := replicadb.Memory()
+	require.NoError(t, err)
+
+	const n = 4
+	executor := NewExecutor(db, WithMaxParallelism(n))
+	var (
+		mu      sync.Mutex
+		running int
+		most    int
+	)
+	require.NoError(t, executor.RegisterActivity(TestActivityName, func(ctx task.ActivityContext) (any, error) {
+		mu.Lock()
+		running++
+		most = max(most, running)
+		mu.Unlock()
+		time.Sleep(200 * time.Millisecond)
+		mu.Lock()
+		running--
+		mu.Unlock()
+		return nil, nil
+	}))
+	require.NoError(t, executor.RegisterOrchestration(TestOrchestrationName, func(ctx *task.OrchestrationContext) (any, error) {
+		var calls []task.Task
+		for range n {
+			calls = append(calls, ctx.CallActivity(TestActivityName))
+		}
+		for _, c := range calls {
+			if err := c.Await(nil); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	}))
+
+	require.NoError(t, executor.Start(t.Context()))
+	defer func() {
+		require.NoError(t, executor.Shutdown(t.Context()))
+	}()
+
+	id, err := executor.ScheduleOrchestration(t.Context(), TestOrchestrationName)
+	require.NoError(t, err)
+	_, err = executor.WaitForOrchestrationCompletion(t.Context(), id)
+	require.NoError(t, err)
+	require.Greater(t, most, 1, "activities ran side by side")
 }

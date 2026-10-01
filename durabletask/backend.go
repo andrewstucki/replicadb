@@ -41,6 +41,7 @@ type ReplicaDBBackend struct {
 	activityLockTimeout      time.Duration
 	workerName               string
 	logger                   backend.Logger
+	maxParallelism           int32
 }
 
 var _ backend.Backend = (*ReplicaDBBackend)(nil)
@@ -56,6 +57,14 @@ func WithOrchestrationLockTimeout(timeout time.Duration) func(b *ReplicaDBBacken
 func WithActivityLockTimeout(timeout time.Duration) func(b *ReplicaDBBackend) {
 	return func(b *ReplicaDBBackend) {
 		b.activityLockTimeout = timeout
+	}
+}
+
+// WithMaxParallelism configures how many work items each of an executor's
+// workers, orchestration and activity, runs at once. The default is one.
+func WithMaxParallelism(n int32) func(b *ReplicaDBBackend) {
+	return func(b *ReplicaDBBackend) {
+		b.maxParallelism = n
 	}
 }
 
@@ -91,6 +100,7 @@ func NewReplicaDBBackend(db *replicadb.DB, options ...Option) *ReplicaDBBackend 
 		orchestrationLockTimeout: time.Duration(2 * time.Minute),
 		activityLockTimeout:      time.Duration(2 * time.Minute),
 		logger:                   NoopLogger(),
+		maxParallelism:           1,
 	}
 
 	for _, opt := range options {
