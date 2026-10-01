@@ -15,8 +15,12 @@ import (
 	"github.com/testcontainers/testcontainers-go/modules/minio"
 )
 
+// minioImage is Silo, a public fork of MinIO, pinned to a release.
+// NB: MinIO no longer publishes minio/minio.
+const minioImage = "docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z"
+
 func TestPrimaryAndReplica(t *testing.T) {
-	container, err := minio.Run(t.Context(), "minio/minio:RELEASE.2024-01-16T16-07-38Z")
+	container, err := minio.Run(t.Context(), minioImage)
 	require.NoError(t, err)
 	t.Cleanup(func() { container.Terminate(context.Background()) })
 
