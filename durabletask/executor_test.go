@@ -1,7 +1,9 @@
 package durabletask
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -119,4 +121,29 @@ func TestExecutorParallelism(t *testing.T) {
 	_, err = executor.WaitForOrchestrationCompletion(t.Context(), id)
 	require.NoError(t, err)
 	require.Greater(t, most, 1, "activities ran side by side")
+}
+
+func TestExecutorsShareACompactor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hub.db")
+	var executors []*Executor
+	for range 2 {
+		db, err := replicadb.Open(path)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = db.Close() })
+		executor := NewExecutor(db).EnableCompactor(time.Hour)
+		require.NoError(t, executor.RegisterOrchestration(TestOrchestrationName, TestingOrchestration))
+		require.NoError(t, executor.RegisterActivity(TestActivityName, TestingActivity))
+		require.NoError(t, executor.Start(t.Context()), "a second executor starts beside the first's compactor")
+		t.Cleanup(func() { require.NoError(t, executor.Shutdown(context.Background())) })
+		executors = append(executors, executor)
+	}
+
+	id, err := executors[1].ScheduleOrchestration(t.Context(), TestOrchestrationName)
+	require.NoError(t, err)
+	_, err = executors[0].WaitForOrchestrationCompletion(t.Context(), id)
+	require.NoError(t, err)
+
+	running, err := isRunning(t.Context(), executors[0].backend, compactionID)
+	require.NoError(t, err)
+	require.True(t, running, "the first executor's compactor still runs")
 }

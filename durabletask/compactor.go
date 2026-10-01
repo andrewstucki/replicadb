@@ -2,6 +2,7 @@ package durabletask
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/microsoft/durabletask-go/api"
@@ -26,16 +27,28 @@ type compactionInput struct {
 	Interval   time.Duration
 }
 
+// compactBackend schedules the hub's compaction orchestration. One compactor serves
+// every executor on the hub: a finished one is replaced, and one that is running,
+// started by this executor or another, is left to run.
 func compactBackend(ctx context.Context, e *Executor) error {
-	// stop and restart with our interval
-	if err := stopCompaction(ctx, e); err != nil {
-		return err
+	_, err := e.ScheduleOrchestration(ctx, compactionOrchestrationName,
+		api.WithInstanceID(compactionID),
+		api.WithOrchestrationIdReusePolicy(&api.OrchestrationIdReusePolicy{
+			OperationStatus: []api.OrchestrationStatus{
+				api.RUNTIME_STATUS_COMPLETED,
+				api.RUNTIME_STATUS_FAILED,
+				api.RUNTIME_STATUS_TERMINATED,
+				api.RUNTIME_STATUS_CANCELED,
+			},
+			Action: api.REUSE_ID_ACTION_TERMINATE,
+		}),
+		api.WithInput(compactionInput{
+			WorkerName: e.backend.workerName,
+			Interval:   e.compactionInterval,
+		}))
+	if errors.Is(err, api.ErrDuplicateInstance) {
+		return nil
 	}
-
-	_, err := e.ScheduleOrchestration(ctx, compactionOrchestrationName, api.WithInstanceID(compactionID), api.WithInput(compactionInput{
-		WorkerName: e.backend.workerName,
-		Interval:   e.compactionInterval,
-	}))
 	return err
 }
 
