@@ -20,6 +20,10 @@ type Executor struct {
 
 	compactorEnabled   bool
 	compactionInterval time.Duration
+
+	// pollers hears the workers' pollers stop, and stopPolling stops them.
+	pollers     *pollerLog
+	stopPolling context.CancelFunc
 }
 
 func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
@@ -27,8 +31,9 @@ func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
 	registry := task.NewTaskRegistry()
 	executor := task.NewTaskExecutor(registry)
 	parallelism := backend.WithMaxParallelism(replicadb.maxParallelism)
-	orchestrationWorker := backend.NewOrchestrationWorker(replicadb, executor, replicadb.logger, parallelism)
-	activityWorker := backend.NewActivityTaskWorker(replicadb, executor, replicadb.logger, parallelism)
+	pollers := &pollerLog{Logger: replicadb.logger, stopped: make(chan struct{}, workers)}
+	orchestrationWorker := backend.NewOrchestrationWorker(replicadb, executor, pollers, parallelism)
+	activityWorker := backend.NewActivityTaskWorker(replicadb, executor, pollers, parallelism)
 	worker := backend.NewTaskHubWorker(replicadb, orchestrationWorker, activityWorker, replicadb.logger)
 	client := backend.NewTaskHubClient(replicadb)
 
@@ -38,6 +43,7 @@ func NewExecutor(db *replicadb.DB, options ...Option) *Executor {
 		executor: executor,
 		client:   client,
 		worker:   worker,
+		pollers:  pollers,
 	}
 }
 
@@ -60,7 +66,9 @@ func (e *Executor) Start(ctx context.Context) error {
 		return err
 	}
 
-	if err := e.worker.Start(ctx); err != nil {
+	polling, stop := context.WithCancel(ctx)
+	e.stopPolling = stop
+	if err := e.worker.Start(polling); err != nil {
 		return err
 	}
 
@@ -70,7 +78,17 @@ func (e *Executor) Start(ctx context.Context) error {
 	return stopCompaction(ctx, e)
 }
 
+// Shutdown stops the workers' pollers, and once each has stopped, drains the workers.
+//
+// NB: durabletask-go's worker adds to its pending WaitGroup each time it polls, and
+// draining waits on that group, so draining while a poller may poll again races. Stopping
+// the pollers first, and waiting for each to say it has, keeps the two apart.
 func (e *Executor) Shutdown(ctx context.Context) error {
+	if e.stopPolling != nil {
+		e.stopPolling()
+		e.stopPolling = nil
+		e.pollers.wait(ctx, workers, pollersStopMost)
+	}
 	return e.worker.Shutdown(ctx)
 }
 

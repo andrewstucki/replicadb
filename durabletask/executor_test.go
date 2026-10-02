@@ -189,3 +189,22 @@ func TestActivityLocksAreRenewed(t *testing.T) {
 	defer mu.Unlock()
 	require.Equal(t, 1, runs, "the activity outlived its lock timeout and ran once")
 }
+
+// TestExecutorShutdownStopsPollersFirst shuts executors down right after they start, as
+// raced durabletask-go's draining with its polling, and checks the pollers still say they
+// stopped, as shutting down relies on.
+func TestExecutorShutdownStopsPollersFirst(t *testing.T) {
+	db, err := replicadb.Memory()
+	require.NoError(t, err)
+	for range 20 {
+		executor := NewExecutor(db)
+		require.NoError(t, executor.Start(t.Context()))
+		require.NoError(t, executor.Shutdown(t.Context()))
+	}
+
+	executor := NewExecutor(db)
+	require.NoError(t, executor.Start(t.Context()))
+	executor.stopPolling()
+	require.True(t, executor.pollers.wait(t.Context(), workers, pollersStopMost), "each poller says it stopped")
+	require.NoError(t, executor.worker.Shutdown(t.Context()))
+}
